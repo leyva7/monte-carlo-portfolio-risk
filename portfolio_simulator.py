@@ -9,10 +9,12 @@ Purpose: Quantitative Finance & Risk Analysis
 """
 
 from __future__ import annotations
+import logging
 import os
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -20,6 +22,21 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yfinance as yf
+
+# Import configuration
+try:
+    import config
+except ImportError:
+    # Fallback if config.py doesn't exist
+    config = None
+
+# Configure logging (only warnings and errors, not INFO)
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Professional color palette for LinkedIn-ready visualizations
 COLORS = {
@@ -41,8 +58,10 @@ TickerList = list[str]
 # -------------------------
 # Helper: setup result folders
 # -------------------------
-def clean_results_dir(base_dir: str = "results") -> None:
+def clean_results_dir(base_dir: str | None = None) -> None:
     """Remove all contents from results directory before new run."""
+    if base_dir is None:
+        base_dir = config.RESULTS_DIR if config else "results"
     results_path = Path(base_dir)
     if results_path.exists() and results_path.is_dir():
         try:
@@ -70,35 +89,74 @@ def setup_results_dirs(base_dir: str = "results") -> dict[str, Path]:
 class DataFetcher:
     """Handles downloading and preprocessing of financial data."""
     
-    def __init__(self, tickers: TickerList, period_years: int = 8) -> None:
+    def __init__(self, tickers: TickerList, period_years: int | None = None, winsorization_percentile: float | None = None) -> None:
         """
         Initialize data fetcher.
         
-        Note: Using 8 years to ensure all assets (including BTC-USD) have
-        complete overlapping data. BTC data on Yahoo Finance starts ~2014.
+        Args:
+            tickers: List of ticker symbols
+            period_years: Years of historical data (defaults to config.PERIOD_YEARS)
+            winsorization_percentile: Percentile for winsorization (defaults to config.WINSORIZATION_PERCENTILE)
         """
         self.tickers = tickers
-        self.period_years = period_years
+        self.period_years = period_years or (config.PERIOD_YEARS if config else 8)
+        self.winsorization_percentile = winsorization_percentile or (config.WINSORIZATION_PERCENTILE if config else None)
+        
+        # Validate tickers exist
+        self._validate_tickers()
 
+    def _validate_tickers(self) -> None:
+        """Validate that tickers exist before downloading."""
+        # Validate tickers exist (silent validation, only raises on error)
+        invalid_tickers = []
+        for ticker in self.tickers:
+            try:
+                test_data = yf.Ticker(ticker)
+                info = test_data.info
+                if not info or 'symbol' not in info:
+                    invalid_tickers.append(ticker)
+            except Exception:
+                invalid_tickers.append(ticker)
+        
+        if invalid_tickers:
+            raise ValueError(f"Invalid tickers: {invalid_tickers}. Please check ticker symbols.")
+    
     def fetch_prices(self, retries: int = 3) -> pd.DataFrame:
-        """Download historical price data with retry logic."""
+        """
+        Download historical price data with retry logic and automatic period adjustment.
+        
+        If requested period doesn't have data for all assets, automatically reduces period.
+        """
         last_error = None
+        period_to_try = self.period_years
+        
         for attempt in range(retries):
             try:
                 prices = yf.download(
                     tickers=self.tickers,
-                    period=f"{self.period_years}y",
+                    period=f"{period_to_try}y",
                     auto_adjust=False,
                     progress=False,
                 )
                 if prices is not None and not prices.empty:
+                    # Check if we have data for all tickers
+                    if isinstance(prices.columns, pd.MultiIndex):
+                        available_tickers = set(prices.columns.get_level_values(1).unique())
+                    else:
+                        available_tickers = set(prices.columns)
+                    
+                    # If missing data and period > 5, try shorter period
+                    if len(available_tickers) < len(self.tickers) and period_to_try > 5:
+                        period_to_try = max(5, period_to_try - 2)
+                        continue
                     break
             except Exception as e:
                 last_error = e
                 if attempt < retries - 1:
+                    period_to_try = max(5, period_to_try - 2)
                     continue
                 else:
-                    raise ValueError(f"Failed download: {e}") from e
+                    raise ValueError(f"Failed download after {retries} attempts: {e}") from e
 
         if isinstance(prices.columns, pd.MultiIndex):
             level0_values = prices.columns.get_level_values(0)
@@ -122,8 +180,21 @@ class DataFetcher:
         return prices_clean
 
     def compute_log_returns(self, prices: pd.DataFrame) -> pd.DataFrame:
-        """Calculate logarithmic returns for GBM modeling."""
-        return np.log(prices / prices.shift(1)).dropna()
+        """
+        Calculate logarithmic returns for GBM modeling with outlier handling.
+        
+        Applies winsorization if configured to handle extreme returns (e.g., BTC spikes).
+        """
+        log_returns = np.log(prices / prices.shift(1)).dropna()
+        
+        # Apply winsorization if configured
+        if self.winsorization_percentile is not None and self.winsorization_percentile > 0:
+            for col in log_returns.columns:
+                lower_bound = log_returns[col].quantile(self.winsorization_percentile)
+                upper_bound = log_returns[col].quantile(1 - self.winsorization_percentile)
+                log_returns[col] = log_returns[col].clip(lower=lower_bound, upper=upper_bound)
+        
+        return log_returns
 
 # -------------------------
 # PortfolioOptimizer
@@ -131,10 +202,23 @@ class DataFetcher:
 class PortfolioOptimizer:
     """Calculates key portfolio statistics from historical returns."""
     
-    def __init__(self, log_returns: pd.DataFrame) -> None:
+    def __init__(self, log_returns: pd.DataFrame, regularization: float | None = None) -> None:
+        """
+        Initialize portfolio optimizer.
+        
+        Args:
+            log_returns: DataFrame of logarithmic returns
+            regularization: Small value to add to covariance matrix diagonal (defaults to config)
+        """
         self.log_returns = log_returns
         self.mean_returns = log_returns.mean().to_numpy()
-        self.cov_matrix = log_returns.cov().to_numpy()
+        cov_matrix = log_returns.cov().to_numpy()
+        
+        # Apply regularization to ensure positive definiteness
+        reg_value = regularization or (config.COV_REGULARIZATION if config else 1e-8)
+        cov_matrix += np.eye(cov_matrix.shape[0]) * reg_value
+        
+        self.cov_matrix = cov_matrix
         self.corr_matrix = log_returns.corr()
 
 # -------------------------
@@ -154,8 +238,17 @@ class MonteCarloSimulator:
         self.steps = steps
         self.n_sims = n_sims
         self.n_assets = start_prices.shape[0]
-        # Cholesky decomposition enables efficient generation of correlated shocks
-        self.cholesky = np.linalg.cholesky(cov_matrix)
+        
+        # Pre-calculate drift for efficiency (moved outside simulation loop)
+        self.drift = (mean_returns - 0.5 * np.diag(cov_matrix)).reshape(1, 1, self.n_assets)
+        
+        # Cholesky decomposition with error handling
+        try:
+            self.cholesky = np.linalg.cholesky(cov_matrix)
+        except np.linalg.LinAlgError:
+            # Add small regularization to diagonal if not positive definite
+            reg_cov = cov_matrix + np.eye(cov_matrix.shape[0]) * 1e-6
+            self.cholesky = np.linalg.cholesky(reg_cov)
 
     def simulate_paths(self, seed: int | None = 42) -> np.ndarray:
         """
@@ -175,11 +268,9 @@ class MonteCarloSimulator:
         shocks = rng.standard_normal((self.n_sims, self.steps, self.n_assets))
         # Transform to correlated shocks using Cholesky decomposition
         correlated_shocks = shocks @ self.cholesky.T
-        # Calculate drift term: μ - 0.5*σ² (Itô's lemma correction)
-        drift = self.mean_returns - 0.5 * np.diag(self.cov_matrix)
-        drift = drift.reshape(1, 1, self.n_assets)
+        # Use pre-calculated drift (Itô's lemma correction: μ - 0.5*σ²)
         # Calculate log returns: drift + correlated shocks
-        log_returns = drift + correlated_shocks
+        log_returns = self.drift + correlated_shocks
         # Cumulative sum to get log price paths
         log_paths = np.cumsum(log_returns, axis=1)
         # Convert to price paths
@@ -247,6 +338,57 @@ class RiskMetrics:
             max_drawdowns[i] = drawdowns.max()
         return max_drawdowns.mean(), max_drawdowns
 
+    def sortino_ratio(self, portfolio_growth: np.ndarray, risk_free_rate: float = 0.0, horizon_years: float = 1.0) -> float:
+        """
+        Calculate annualized Sortino ratio (only penalizes downside volatility).
+        
+        Formula: Sortino = (R_p - R_f) / σ_downside
+        Where σ_downside is the standard deviation of negative returns only.
+        """
+        final_returns = portfolio_growth[:, -1] - 1
+        annualized_returns = np.power(1 + final_returns, 1.0 / horizon_years) - 1
+        mean_annual_return = annualized_returns.mean()
+        
+        # Calculate downside deviation (only negative returns)
+        downside_returns = annualized_returns[annualized_returns < 0]
+        if len(downside_returns) == 0:
+            return float('inf') if mean_annual_return > risk_free_rate else 0.0
+        
+        downside_std = np.std(downside_returns)
+        if downside_std == 0:
+            return 0.0
+        
+        return (mean_annual_return - risk_free_rate) / downside_std
+    
+    def calmar_ratio(self, portfolio_growth: np.ndarray, horizon_years: float = 1.0) -> float:
+        """
+        Calculate Calmar ratio: annualized return / maximum drawdown.
+        
+        Higher is better. Measures return per unit of maximum drawdown risk.
+        """
+        final_returns = portfolio_growth[:, -1] - 1
+        annualized_returns = np.power(1 + final_returns, 1.0 / horizon_years) - 1
+        mean_annual_return = annualized_returns.mean()
+        
+        _, max_dds = self.max_drawdown(portfolio_growth)
+        mean_max_dd = max_dds.mean()
+        
+        if mean_max_dd == 0:
+            return float('inf') if mean_annual_return > 0 else 0.0
+        
+        return mean_annual_return / mean_max_dd
+    
+    def probability_of_loss(self, portfolio_growth: np.ndarray) -> float:
+        """
+        Calculate probability that portfolio ends below initial value.
+        
+        Returns:
+            Probability (0-1) that final value < 1.0
+        """
+        final_values = portfolio_growth[:, -1]
+        losses = np.sum(final_values < 1.0)
+        return losses / len(final_values)
+    
     def compute_all_metrics(self, portfolio_growth: np.ndarray, risk_free_rate: float = 0.0, horizon_years: float = 1.0) -> dict[str, float]:
         """
         Compute all risk and return metrics.
@@ -266,6 +408,9 @@ class RiskMetrics:
         std_ret_annualized = np.std(annualized_returns)
         
         sharpe = self.sharpe_ratio(portfolio_growth, risk_free_rate, horizon_years)
+        sortino = self.sortino_ratio(portfolio_growth, risk_free_rate, horizon_years)
+        calmar = self.calmar_ratio(portfolio_growth, horizon_years)
+        prob_loss = self.probability_of_loss(portfolio_growth)
         mean_dd, max_dds = self.max_drawdown(portfolio_growth)
         
         return {
@@ -276,6 +421,9 @@ class RiskMetrics:
             "var_95": var95,
             "cvar_95": cvar95,
             "sharpe_ratio": sharpe,
+            "sortino_ratio": sortino,
+            "calmar_ratio": calmar,
+            "probability_of_loss": prob_loss,
             "mean_max_drawdown": mean_dd,
             "max_drawdown_95": np.percentile(max_dds, 95),
         }
@@ -316,8 +464,23 @@ def save_figure(fig: go.Figure, path: Path, width: int = 1600, height: int = 900
     """Save figure as high-resolution PNG for LinkedIn posts."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fig.write_image(str(path), width=width, height=height, scale=3)
+        # Use config defaults if not provided
+        img_width = config.IMAGE_WIDTH if config else 1600
+        img_height = config.IMAGE_HEIGHT if config else 900
+        img_scale = config.IMAGE_SCALE if config else 3
+        export_html = config.EXPORT_HTML if config else False
+        
+        fig.write_image(str(path), width=img_width, height=img_height, scale=img_scale)
         print(f"[OK] Saved: {path}")
+        
+        # Save HTML if configured
+        if export_html:
+            html_path = path.with_suffix('.html')
+            try:
+                fig.write_html(str(html_path))
+                # Silent HTML save (optional)
+            except Exception:
+                pass  # Silent fail for HTML
     except Exception as e:
         print(f"[WARNING] Could not save figure {path}: {e}")
         print("   Make sure kaleido is installed: pip install kaleido")
@@ -803,25 +966,26 @@ def main() -> None:
     print(" " * 20 + "MONTE CARLO PORTFOLIO RISK SIMULATOR")
     print("="*80 + "\n")
     
-    # Configuration
-    tickers = ["SPY", "BTC-USD", "GLD", "BND"]
-
-    portfolio_configs = {
-        # Distribution: [SPY, BTC-USD, GLD, BND]
-        
-        # CONSERVATIVE: High bond allocation (60%) and minimal crypto (2%) 
-        # to lower the portfolio's overall standard deviation.
-        "Conservative": np.array([0.28, 0.02, 0.10, 0.60]),
-        
-        # AGGRESSIVE: Focus on growth (SPY) and high-volatility assets (BTC)
-        "Aggressive": np.array([0.50, 0.20, 0.20, 0.10]),
-        
-        # GOLD HEAVY: Focused on inflation protection and hedging
-        "Gold Heavy": np.array([0.20, 0.10, 0.50, 0.20]),
-    }
-    horizon_days = 3650  # 10 years (3650 trading days per year)
-    n_sims = 10_000
-    risk_free_rate = 0.02  # 2% annual risk-free rate
+    # Load configuration from config.py or use defaults
+    if config:
+        tickers = config.TICKERS
+        portfolio_configs = config.PORTFOLIO_CONFIGS
+        horizon_days = config.HORIZON_DAYS
+        n_sims = config.N_SIMULATIONS
+        risk_free_rate = config.RISK_FREE_RATE
+        random_seed = config.RANDOM_SEED
+    else:
+        # Fallback defaults
+        tickers = ["SPY", "BTC-USD", "GLD", "^FVX"]
+        portfolio_configs = {
+            "Conservative": np.array([0.30, 0.00, 0.10, 0.60]),
+            "Aggressive": np.array([0.80, 0.20, 0.00, 0.00]),
+            "Gold Heavy": np.array([0.20, 0.10, 0.50, 0.20]),
+        }
+        horizon_days = 2520  # 10 years
+        n_sims = 10_000
+        risk_free_rate = 0.02
+        random_seed = 42
     
     # Clean previous results
     clean_results_dir()
@@ -835,7 +999,8 @@ def main() -> None:
         portfolio_configs,
         horizon_days,
         n_sims,
-        risk_free_rate
+        risk_free_rate,
+        seed=random_seed
     )
     
     # Print executive summary
