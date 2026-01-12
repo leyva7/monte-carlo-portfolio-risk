@@ -26,6 +26,9 @@ import yfinance as yf
 # Import configuration
 try:
     import config
+    import importlib
+    # Force reload to pick up any changes to config.py
+    importlib.reload(config)
 except ImportError:
     # Fallback if config.py doesn't exist
     config = None
@@ -686,8 +689,8 @@ def plot_final_distribution(
     )
     
     # Estimate horizon from number of simulations (assuming 252 days per year)
-    # We'll use 3 years as default since that's our current setting
-    horizon_years = 3
+    # We'll use 10 years as default since that's our current setting
+    horizon_years = 10
     layout = get_professional_layout(
         f"{portfolio_name} - Final Return Distribution ({horizon_years:.0f} Year Forecast)<br><sub>10,000 Monte Carlo Simulations</sub>",
         "Portfolio Return",
@@ -978,8 +981,8 @@ def main() -> None:
         # Fallback defaults
         tickers = ["SPY", "BTC-USD", "GLD", "^FVX"]
         portfolio_configs = {
-            "Conservative": np.array([0.30, 0.00, 0.10, 0.60]),
-            "Aggressive": np.array([0.80, 0.20, 0.00, 0.00]),
+            "Bond Heavy": np.array([0.30, 0.00, 0.10, 0.60]),
+            "Equity + Crypto": np.array([0.80, 0.20, 0.00, 0.00]),
             "Gold Heavy": np.array([0.20, 0.10, 0.50, 0.20]),
         }
         horizon_days = 2520  # 10 years

@@ -15,7 +15,7 @@ TICKERS: list[str] = ["SPY", "BTC-USD", "GLD", "BND"]
 
 # Historical data period (years)
 # Note: BTC-USD data starts ~2014, so 8-10 years ensures complete data
-PERIOD_YEARS: int = 8
+PERIOD_YEARS: int = 12
 
 # ============================================================================
 # PORTFOLIO CONFIGURATIONS
@@ -24,14 +24,8 @@ PERIOD_YEARS: int = 8
 # Portfolio allocation strategies
 # Format: [SPY, BTC-USD, GLD, BND]
 PORTFOLIO_CONFIGS: Dict[str, np.ndarray] = {
-    # CONSERVATIVE: High bond allocation (60%) and minimal crypto (2%) 
-    # to lower the portfolio's overall standard deviation.
-    "Conservative": np.array([0.28, 0.02, 0.10, 0.60]),
-    
-    # AGGRESSIVE: Focus on growth (SPY) and high-volatility assets (BTC)
-    "Aggressive": np.array([0.50, 0.20, 0.20, 0.10]),
-    
-    # GOLD HEAVY: Focused on inflation protection and hedging
+    "Bond Heavy": np.array([0.30, 0.00, 0.10, 0.60]),
+    "Equity + Crypto": np.array([0.80, 0.20, 0.00, 0.00]),
     "Gold Heavy": np.array([0.20, 0.10, 0.50, 0.20]),
 }
 
@@ -41,7 +35,7 @@ PORTFOLIO_CONFIGS: Dict[str, np.ndarray] = {
 
 # Simulation horizon (trading days)
 # 252 days = 1 year, 2520 days = 10 years
-HORIZON_DAYS: int = 2520  # 10 years
+HORIZON_DAYS: int = 5475  # 15 years
 
 # Number of Monte Carlo simulations
 N_SIMULATIONS: int = 10_000
