@@ -205,15 +205,26 @@ class DataFetcher:
 class PortfolioOptimizer:
     """Calculates key portfolio statistics from historical returns."""
     
-    def __init__(self, log_returns: pd.DataFrame, regularization: float | None = None) -> None:
+    def __init__(self, log_returns: pd.DataFrame, tickers: list[str] | None = None, regularization: float | None = None) -> None:
         """
         Initialize portfolio optimizer.
         
         Args:
             log_returns: DataFrame of logarithmic returns
+            tickers: List of tickers in the desired order (if None, uses DataFrame column order)
             regularization: Small value to add to covariance matrix diagonal (defaults to config)
         """
         self.log_returns = log_returns
+        
+        # Ensure tickers are in the correct order
+        if tickers is not None:
+            # Reorder DataFrame columns to match ticker order
+            available_tickers = [t for t in tickers if t in log_returns.columns]
+            if len(available_tickers) != len(tickers):
+                missing = set(tickers) - set(available_tickers)
+                raise ValueError(f"Missing tickers in data: {missing}")
+            log_returns = log_returns[available_tickers]
+        
         self.mean_returns = log_returns.mean().to_numpy()
         cov_matrix = log_returns.cov().to_numpy()
         
@@ -928,7 +939,9 @@ def compare_portfolios(
     fetcher = DataFetcher(tickers)
     prices = fetcher.fetch_prices()
     log_returns = fetcher.compute_log_returns(prices)
-    optimizer = PortfolioOptimizer(log_returns)
+    # Ensure log_returns columns are in the same order as tickers
+    log_returns = log_returns[tickers]
+    optimizer = PortfolioOptimizer(log_returns, tickers=tickers)
     start_prices = prices.iloc[-1].to_numpy()
     
     print(f"[OK] Data downloaded: {len(prices)} days of history")

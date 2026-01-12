@@ -26,7 +26,7 @@ PERIOD_YEARS: int = 12
 PORTFOLIO_CONFIGS: Dict[str, np.ndarray] = {
     "Bond Heavy": np.array([0.30, 0.00, 0.10, 0.60]),
     "Equity + Crypto": np.array([0.80, 0.20, 0.00, 0.00]),
-    "Gold Heavy": np.array([0.20, 0.10, 0.50, 0.20]),
+    "Gold Heavy": np.array([0.20, 0.00, 0.60, 0.20]),
 }
 
 # ============================================================================
@@ -35,7 +35,7 @@ PORTFOLIO_CONFIGS: Dict[str, np.ndarray] = {
 
 # Simulation horizon (trading days)
 # 252 days = 1 year, 2520 days = 10 years
-HORIZON_DAYS: int = 5475  # 15 years
+HORIZON_DAYS: int = 2520  # 10 years
 
 # Number of Monte Carlo simulations
 N_SIMULATIONS: int = 10_000
