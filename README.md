@@ -133,6 +133,7 @@ python portfolio_simulator.py
 ================================================================================
                          EXECUTIVE SUMMARY
 ================================================================================
+
 [*] PORTFOLIO RISK ANALYSIS - MONTE CARLO SIMULATION
 Assets Analyzed: SPY, BTC-USD, GLD, BND
 Simulations per Portfolio: 10,000
@@ -141,13 +142,14 @@ Time Horizon: 2520 trading days (10.0 years)
 --------------------------------------------------------------------------------
 PORTFOLIO PERFORMANCE COMPARISON
 --------------------------------------------------------------------------------
-   Portfolio Cumulative Return Annualized Return Sharpe Ratio VaR 95% Max DD
-Conservative           347.71%            10.07%         2.19  79.69% 25.11%
-  Aggressive           328.45%             9.38%         1.68  37.93% 32.06%
-  Gold Heavy           548.40%            12.95%         2.95 162.83% 21.96%
+      Portfolio Cumulative Return Annualized Return Sharpe Ratio VaR 95% Max DD
+     Bond Heavy            86.92%             6.29%         2.19  35.63%  9.57%
+Equity + Crypto           619.16%            19.85%         2.49 125.16% 28.87%
+     Gold Heavy           287.61%            13.92%         3.08 107.12% 15.55%
 
 Note: Cumulative Return = Total return over 10.0 years
       Annualized Return = Average annual return (geometric mean)
+
 ```
 
 ---
@@ -158,8 +160,8 @@ The simulator compares three distinct allocation strategies across **4 assets**:
 
 | Portfolio | SPY | BTC | GLD | BND | Strategy |
 |-----------|-----|-----|-----|-----|----------|
-| **Conservative** | 28% | 2% | 10% | 60% | Bond-heavy, low volatility, minimal crypto exposure |
-| **Aggressive** | 50% | 20% | 20% | 10% | Growth-focused with crypto alpha, balanced equity allocation |
+| **Bond - heavy** | 30% | 0% | 10% | 60% | Bond-heavy, low volatility, minimal crypto exposure |
+| **Equity + Crypto** | 80% | 20% | 0% | 0% | Growth-focused with crypto alpha, balanced equity allocation |
 | **Gold Heavy** | 20% | 10% | 50% | 20% | Inflation hedge & safe-haven focused, defensive positioning |
 
 You can easily modify these configurations in the `main()` function of `portfolio_simulator.py`.
@@ -329,5 +331,3 @@ Potential improvements for production use:
 ---
 
 **Built with ❤️ for quantitative finance and data science**
-
-*Ready for LinkedIn posts and professional portfolio showcases*
