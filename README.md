@@ -30,7 +30,7 @@ This simulator analyzes portfolio risk by running **10,000 Monte Carlo simulatio
 
 | 📈 Strategy Comparison | 📉 Risk Distribution |
 |---|---|
-| ![Median Paths](results/comparison/median_paths_sample.png) | ![Distribution](results/distribution/Aggressive_dist_sample.png) |
+| ![Median Paths](results/paths/Equity_+_Crypto_20260112_224202.png) | ![Distribution](results/distribution/Equity_+_Crypto_dist_20260112_224202.png) |
 | *10-year median growth comparison across portfolios with confidence intervals* | *95% VaR and CVaR tail-risk analysis from 10,000 simulations* |
 
 **Generated Visualizations:**
